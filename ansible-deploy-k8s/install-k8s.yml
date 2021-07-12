@@ -1,0 +1,77 @@
+---
+- hosts: "masters, workers"
+  remote_user: cloud_user
+  become: yes
+  become_method: sudo
+  become_user: root
+  gather_facts: yes
+  connection: ssh
+
+  tasks:
+     - name: Create containerd config file
+       file:
+         path: "/etc/modules-load.d/containerd.conf"
+         state: "touch"
+
+     - name: Add conf for containerd
+       blockinfile:
+         path: "/etc/modules-load.d/containerd.conf"
+         block: |
+               overlay
+               br_netfilter
+
+     - name: modprobe
+       shell: |
+               sudo modprobe overlay
+               sudo modprobe br_netfilter
+
+
+     - name: Set system configurations for Kubernetes networking
+       file:
+         path: "/etc/sysctl.d/99-kubernetes-cri.conf"
+         state: "touch"
+
+     - name: Add conf for containerd
+       blockinfile:
+         path: "/etc/sysctl.d/99-kubernetes-cri.conf"
+         block: |
+                net.bridge.bridge-nf-call-iptables = 1
+                net.ipv4.ip_forward = 1
+                net.bridge.bridge-nf-call-ip6tables = 1
+
+     - name: Apply new settings
+       command: sudo sysctl --system
+
+     - name: install containerd
+       shell: |
+               sudo apt-get update && sudo apt-get install -y containerd
+               sudo mkdir -p /etc/containerd
+               sudo containerd config default | sudo tee /etc/containerd/config.toml
+               sudo systemctl restart containerd
+
+     - name: disable swap
+       shell: |
+               sudo swapoff -a
+               sudo sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
+
+     - name: install and configure dependencies
+       shell: |
+               sudo apt-get update && sudo apt-get install -y apt-transport-https curl
+               curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add -
+
+     - name: Create kubernetes repo file
+       file:
+         path: "/etc/apt/sources.list.d/kubernetes.list"
+         state: "touch"
+
+     - name: Add K8s Source
+       blockinfile:
+         path: "/etc/apt/sources.list.d/kubernetes.list"
+         block: |
+               deb https://apt.kubernetes.io/ kubernetes-xenial main
+
+     - name: install kubernetes
+       shell: |
+               sudo apt-get update
+               sudo apt-get install -y kubelet=1.20.1-00 kubeadm=1.20.1-00 kubectl=1.20.1-00
+               sudo apt-mark hold kubelet kubeadm kubectl
